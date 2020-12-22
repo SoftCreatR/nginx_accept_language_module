@@ -2,6 +2,14 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
+typedef struct {
+  ngx_array_t langs;
+} ngx_http_accept_language_loc_conf_t;
+
+static void *ngx_http_accept_language_create_conf(ngx_conf_t *cf);
+static char *ngx_http_accept_language_merge_conf(ngx_conf_t *cf, void *parent,
+    void *child);
+
 static char *ngx_http_accept_language(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_accept_language_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
 
@@ -10,8 +18,8 @@ static ngx_command_t ngx_http_accept_language_commands[] = {
     ngx_string("set_from_accept_language"),
     NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
     ngx_http_accept_language,
-    NGX_HTTP_MAIN_CONF_OFFSET,
-    0,
+    NGX_HTTP_LOC_CONF_OFFSET,
+    offsetof(ngx_http_accept_language_loc_conf_t, langs),
     NULL
   },
   ngx_null_command
@@ -19,7 +27,14 @@ static ngx_command_t ngx_http_accept_language_commands[] = {
 
 // No need for any configuration callback
 static ngx_http_module_t ngx_http_accept_language_module_ctx = {
-  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  ngx_http_accept_language_create_conf,
+  ngx_http_accept_language_merge_conf
 };
 
 ngx_module_t ngx_http_accept_language_module = {
@@ -36,6 +51,45 @@ ngx_module_t ngx_http_accept_language_module = {
   NULL,                                  /* exit master */
   NGX_MODULE_V1_PADDING
 };
+
+static void * ngx_http_accept_language_create_conf(ngx_conf_t *cf)
+{
+  ngx_http_accept_language_loc_conf_t *conf;
+
+  conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_accept_language_loc_conf_t));
+  if (conf == NULL) {
+    return NULL;
+  }
+
+  if (ngx_array_init(&conf->langs, cf->pool, 4, sizeof(ngx_str_t)) != NGX_OK) {
+    return NULL;
+  }
+
+  return conf;
+}
+
+static char * ngx_http_accept_language_merge_conf(ngx_conf_t *cf, void *parent, void *child)
+{
+  ngx_str_t *elt;
+
+  ngx_http_accept_language_loc_conf_t *prev = parent;
+  ngx_http_accept_language_loc_conf_t *conf = child;
+
+  ngx_str_t *prev_langs = prev->langs.elts;
+  ngx_str_t *conf_langs = conf->langs.elts;
+
+  if (conf->langs.nelts == 0) {
+    for (uint x = 0; x < prev->langs.nelts; x++) {
+      elt = ngx_array_push(conf->langs.elts);
+      if (elt == NULL) {
+        return NGX_CONF_ERROR;
+      }
+      *elt = prev_langs[x];
+    }
+  }
+
+  return NGX_CONF_OK;
+}
 
 static char * ngx_http_accept_language(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
@@ -58,24 +112,17 @@ static char * ngx_http_accept_language(ngx_conf_t *cf, ngx_command_t *cmd, void 
   if (var == NULL) {
     return NGX_CONF_ERROR;
   }
-  if (var->get_handler != NULL) {
-    ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "variable already defined: \"%V\"", &name);
-    return NGX_CONF_ERROR;
+  if (var->get_handler == NULL) {
+    var->get_handler = ngx_http_accept_language_variable;
   }
 
-  var->get_handler = ngx_http_accept_language_variable;
-  langs_array = ngx_array_create(cf->pool, cf->args->nelts - 1, sizeof(ngx_str_t));
-  if (langs_array == NULL) {
-    return NGX_CONF_ERROR;
-  }
-  var->data = (uintptr_t) langs_array;
+  ngx_http_accept_language_loc_conf_t *alcf = conf;
 
   for (i = 2; i < cf->args->nelts; i++) {
-    elt = ngx_array_push(langs_array);
+    elt = ngx_array_push(&alcf->langs);
     if (elt == NULL) {
       return NGX_CONF_ERROR;
     }
-
     *elt = value[i];
   }
 
@@ -84,11 +131,21 @@ static char * ngx_http_accept_language(ngx_conf_t *cf, ngx_command_t *cmd, void 
 
 static ngx_int_t ngx_http_accept_language_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data)
 {
+  ngx_http_accept_language_loc_conf_t *alcf;
+  alcf = ngx_http_get_module_loc_conf(r, ngx_http_accept_language_module);
+
+  if (alcf == NULL || alcf->langs.nelts == 0) {
+    v->valid = 0;
+    v->no_cacheable = 1;
+    v->not_found = 1;
+    return NGX_OK;
+  }
+
+  ngx_str_t *langs = alcf->langs.elts;
+
   ngx_uint_t i = 0;
   ngx_uint_t found = 0;
   u_char *start, *pos, *end;
-  ngx_array_t *langs_array = (ngx_array_t *) data;
-  ngx_str_t *langs = (ngx_str_t *) langs_array->elts;
 
   if (NULL != r->headers_in.accept_language) {
     start = r->headers_in.accept_language->value.data;
@@ -106,7 +163,7 @@ static ngx_int_t ngx_http_accept_language_variable(ngx_http_request_t *r, ngx_ht
         pos++;
       }
 
-      for (i = 0; i < langs_array->nelts; i++) {
+      for (i = 0; i < alcf->langs.nelts; i++) {
         if ((ngx_uint_t)(pos - start) >= langs[i].len && ngx_strncasecmp(start, langs[i].data, langs[i].len) == 0) {
           found = 1;
           break;
