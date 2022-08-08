@@ -27,14 +27,14 @@ static ngx_command_t ngx_http_accept_language_commands[] = {
 
 // No need for any configuration callback
 static ngx_http_module_t ngx_http_accept_language_module_ctx = {
-  NULL,
-  NULL,
-  NULL,
-  NULL,
-  NULL,
-  NULL,
-  ngx_http_accept_language_create_conf,
-  ngx_http_accept_language_merge_conf
+  NULL, // preconfiguration
+  NULL, // postconfiguration
+  NULL, // create_main_conf
+  NULL, // init_main_conf
+  NULL, // create_srv_conf
+  NULL, // merge_srv_conf
+  ngx_http_accept_language_create_conf, // create_loc_conf
+  ngx_http_accept_language_merge_conf // merge_loc_conf
 };
 
 ngx_module_t ngx_http_accept_language_module = {
@@ -76,11 +76,10 @@ static char * ngx_http_accept_language_merge_conf(ngx_conf_t *cf, void *parent, 
   ngx_http_accept_language_loc_conf_t *conf = child;
 
   ngx_str_t *prev_langs = prev->langs.elts;
-  ngx_str_t *conf_langs = conf->langs.elts;
 
   if (conf->langs.nelts == 0) {
     for (uint x = 0; x < prev->langs.nelts; x++) {
-      elt = ngx_array_push(conf->langs.elts);
+      elt = ngx_array_push(&conf->langs);
       if (elt == NULL) {
         return NGX_CONF_ERROR;
       }
@@ -96,7 +95,6 @@ static char * ngx_http_accept_language(ngx_conf_t *cf, ngx_command_t *cmd, void 
   ngx_uint_t i;
   ngx_str_t *value, *elt, name;
   ngx_http_variable_t *var;
-  ngx_array_t *langs_array;
 
   value = cf->args->elts;
   name = value[1];
