@@ -129,70 +129,93 @@ static char * ngx_http_accept_language(ngx_conf_t *cf, ngx_command_t *cmd, void 
 
 static ngx_int_t ngx_http_accept_language_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data)
 {
-  ngx_http_accept_language_loc_conf_t *alcf;
-  alcf = ngx_http_get_module_loc_conf(r, ngx_http_accept_language_module);
+    ngx_http_accept_language_loc_conf_t *alcf;
+    alcf = ngx_http_get_module_loc_conf(r, ngx_http_accept_language_module);
 
-  if (alcf == NULL || alcf->langs.nelts == 0) {
-    v->valid = 0;
-    v->no_cacheable = 1;
-    v->not_found = 1;
-    return NGX_OK;
-  }
-
-  ngx_str_t *langs = alcf->langs.elts;
-
-  ngx_uint_t i = 0;
-  ngx_uint_t found = 0;
-  u_char *start, *pos, *end;
-
-  if (NULL != r->headers_in.accept_language) {
-    start = r->headers_in.accept_language->value.data;
-    end = start + r->headers_in.accept_language->value.len;
-
-    while (start < end) {
-      // eating spaces
-      while (start < end && *start == ' ') {
-        start++;
-      }
-
-      pos = start;
-
-      while (pos < end && *pos != ',' && *pos != ';') {
-        pos++;
-      }
-
-      for (i = 0; i < alcf->langs.nelts; i++) {
-        if ((ngx_uint_t)(pos - start) >= langs[i].len && ngx_strncasecmp(start, langs[i].data, langs[i].len) == 0) {
-          found = 1;
-          break;
-        }
-      }
-      if (found) {
-        break;
-      }
-
-      i = 0; // If not found default to the first language from the list
-
-      // We discard the quality value
-      if (*pos == ';') {
-        while (pos < end && *pos != ',') {
-          pos++;
-        }
-      }
-      if (*pos == ',') {
-        pos++;
-      }
-
-      start = pos;
+    if (alcf == NULL || alcf->langs.nelts == 0) {
+        v->valid = 0;
+        v->no_cacheable = 1;
+        v->not_found = 1;
+        return NGX_OK;
     }
-  }
 
-  v->data = langs[i].data;
-  v->len = langs[i].len;
+    ngx_str_t *langs = alcf->langs.elts;
 
-  /* Set all required params */
-  v->valid = 1;
-  v->no_cacheable = 0;
-  v->not_found = 0;
-  return NGX_OK;
+    ngx_uint_t i = 0;
+    ngx_uint_t found = 0;
+    u_char *start, *pos, *end;
+
+    ngx_table_elt_t *accept_language_header = NULL;
+    ngx_list_part_t *part = &r->headers_in.headers.part;
+    ngx_table_elt_t *header = part->elts;
+
+    for (i = 0; /* void */; i++) {
+        if (i >= part->nelts) {
+            if (part->next == NULL) {
+                break;
+            }
+
+            part = part->next;
+            header = part->elts;
+            i = 0;
+        }
+
+        if (ngx_strcasecmp(header[i].key.data, (u_char *)"Accept-Language") == 0) {
+            accept_language_header = &header[i];
+            break;
+        }
+    }
+
+    if (accept_language_header != NULL) {
+        start = accept_language_header->value.data;
+        end = start + accept_language_header->value.len;
+
+        while (start < end) {
+            // Skip spaces
+            while (start < end && *start == ' ') {
+                start++;
+            }
+
+            pos = start;
+
+            while (pos < end && *pos != ',' && *pos != ';') {
+                pos++;
+            }
+
+            for (i = 0; i < alcf->langs.nelts; i++) {
+                if ((ngx_uint_t)(pos - start) >= langs[i].len && ngx_strncasecmp(start, langs[i].data, langs[i].len) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (found) {
+                break;
+            }
+
+            i = 0; // Default to the first language in the list
+
+            // Discard the quality value
+            if (*pos == ';') {
+                while (pos < end && *pos != ',') {
+                    pos++;
+                }
+            }
+            if (*pos == ',') {
+                pos++;
+            }
+
+            start = pos;
+        }
+    }
+
+    v->data = langs[i].data;
+    v->len = langs[i].len;
+
+    // Set all required params
+    v->valid = 1;
+    v->no_cacheable = 0;
+    v->not_found = 0;
+    return NGX_OK;
 }
+
+
